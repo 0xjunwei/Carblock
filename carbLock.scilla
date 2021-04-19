@@ -1,7 +1,7 @@
 scilla_version 0
 
 (*Utils*)
-import BoolUtils 
+import BoolUtils IntUtils 
 
 (***************************************************)
 (*               Associated library                *)
@@ -39,6 +39,7 @@ type Error =
   | CodeContractFunded
   | CodeNotContractOwner
   | CodeBlocksNotMet
+  | CodeWrongAmountSent
 
 
 
@@ -51,6 +52,7 @@ let make_error =
       | CodeContractFunded            => Int32 -1
       | CodeNotContractOwner          => Int32 -2
       | CodeBlocksNotMet              => Int32 -3
+      | CodeWrongAmountSent           => Int32 -4
       end
     in
     { _exception : "Error"; code : result_code }
@@ -72,7 +74,9 @@ field contract_payee : ByStr20 =  initial_owner
 field carbonContractAddr : ByStr20 = carbon_contract_addr
 
 field contract_amount: Uint128 = Uint128 0
+
 field fundedContract: Bool = False
+
 field rewardPerWeek : Uint128 = Uint128 0
 field rewardForLastWeek : Uint128 = Uint128 0
 
@@ -112,10 +116,35 @@ transition receiveRewards()
       match isZero with
         | False =>
           (*Give reward then subtract 1 from weekly*)
+          weeklyBlk <- weeklyBlocks;
           newWeeklyCount = builtin sub weekCount oneUint;
-          howManyWeeklyRewards := newWeeklyCount
+          howManyWeeklyRewards := newWeeklyCount;
+          rewardAmount <- rewardPerWeek;
+          carbonAddr <- carbonContractAddr;
+          
+          blockDifference = bsub currentBlk rewardBlk;
+          rewardsDued = builtin div blockDifference rewardBlk;
+          
+          paymentDued = builtin mul rewardsDued rewardAmount;
+          
+          msg = {_tag: "Transfer"; _recipient : carbonAddr; _amount: Uint128 0; to: _sender; amount: paymentDued};
+          msgs = one_msg msg;
+          send msgs;
+          contract_bal <- contract_amount;
+          newBalance = builtin sub contract_bal rewardAmount;
+          contract_amount := newBalance;
+          
+          
+          
+          nxtRewardBlk = builtin badd currentBlk weeklyBlk;
+          nextRewardBlock := nxtRewardBlk
         | True =>
-          (*Check contract amount the give last week rewards*) 
+          (*Check contract amount the give last week rewards*)
+          
+          
+          msg = {_tag: "Transfer"; _recipient : carbonAddr; _amount: Uint128 0; to: _sender; amount: rewardAmount};
+          msgs = one_msg msg;
+          send msgs
       end
     | False=>
       err = CodeBlocksNotMet;
@@ -139,20 +168,28 @@ transition RecipientAcceptTransfer(
       contract_balance = builtin add initial reward;
       contract_amount := contract_balance;
       
-      onePercent = builtin div contract_balance hundredUint;
-      perWeekReward = builtin mul onePercent rate;
-      rewardPerWeek := perWeekReward;
-      
-      finalWeekRate = builtin rem hundredUint rate;
-      lastWeekReward = builtin mul finalWeekRate onePercent;
-      rewardForLastWeek := lastWeekReward;
-      
-      weekCount = builtin div hundredUint rate;
-      howManyWeeklyRewards := weekCount;
-      
-      current_blk <- & BLOCKNUMBER;
-      firstRewardBlk = builtin badd current_blk weeklyBlk;
-      nextRewardBlock := firstRewardBlk
+      isCorrectFunded = builtin eq contract_balance amount;
+      match isCorrectFunded with
+        | True =>
+          onePercent = builtin div contract_balance hundredUint;
+          perWeekReward = builtin mul onePercent rate;
+          rewardPerWeek := perWeekReward;
+          
+          finalWeekRate = builtin rem hundredUint rate;
+          lastWeekReward = builtin mul finalWeekRate onePercent;
+          rewardForLastWeek := lastWeekReward;
+          
+          weekCount = builtin div hundredUint rate;
+          howManyWeeklyRewards := weekCount;
+          
+          current_blk <- & BLOCKNUMBER;
+          firstRewardBlk = builtin badd current_blk weeklyBlk;
+          nextRewardBlock := firstRewardBlk;
+          fundedContract := true
+        | False =>
+          err = CodeWrongAmountSent;
+          throwError err
+      end
   end
 end
 
