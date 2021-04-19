@@ -1,0 +1,176 @@
+scilla_version 0
+
+(*Utils*)
+import BoolUtils 
+
+(***************************************************)
+(*               Associated library                *)
+(***************************************************)
+library CarbonLock
+
+let one_msg =
+  fun (msg: Message) =>
+  let nil_msg = Nil {Message} in
+  Cons {Message} msg nil_msg
+  
+let two_msgs =
+fun (msg1 : Message) =>
+fun (msg2 : Message) =>
+  let msgs_tmp = one_msg msg2 in
+  Cons {Message} msg1 msgs_tmp
+  
+  
+let blk_leq =
+  fun (blk1 : BNum) =>
+  fun (blk2 : BNum) =>
+    let bc1 = builtin blt blk1 blk2 in 
+    let bc2 = builtin eq blk1 blk2 in 
+    orb bc1 bc2
+    
+
+let true = True
+let false = False
+
+let hundredUint = Uint128 100
+let oneUint = Uint128 1
+let zeroUint = Uint128 0
+
+type Error =
+  | CodeContractFunded
+  | CodeNotContractOwner
+  | CodeBlocksNotMet
+
+
+
+
+
+let make_error =
+  fun (result : Error) =>
+    let result_code = 
+      match result with
+      | CodeContractFunded            => Int32 -1
+      | CodeNotContractOwner          => Int32 -2
+      | CodeBlocksNotMet              => Int32 -3
+      end
+    in
+    { _exception : "Error"; code : result_code }
+
+
+(*-------------------------------------------------*)
+
+contract CarbLock
+(
+  initial_owner : ByStr20,
+  carbon_contract_addr : ByStr20,
+  initial: Uint128,
+  reward: Uint128,
+  rate: Uint128
+)
+
+(*********    Contract Details       *********)
+field contract_payee : ByStr20 =  initial_owner
+field carbonContractAddr : ByStr20 = carbon_contract_addr
+
+field contract_amount: Uint128 = Uint128 0
+field fundedContract: Bool = False
+field rewardPerWeek : Uint128 = Uint128 0
+field rewardForLastWeek : Uint128 = Uint128 0
+
+field howManyWeeklyRewards: Uint128 = Uint128 0
+
+field nextRewardBlock : BNum = BNum 0
+field weeklyBlocks : Uint128 = Uint128 11900
+
+procedure throwError(err : Error)
+  e = make_error err;
+  throw e
+end
+
+procedure isContractOwner()
+  owner <- contract_payee;
+  is_owner = builtin eq owner _sender;
+  match is_owner with 
+    | True =>
+    | False =>
+      err = CodeNotContractOwner;
+      throwError err
+  end
+end
+
+
+
+transition receiveRewards()
+  isContractOwner;
+  currentBlk <- & BLOCKNUMBER;
+  rewardBlk <- nextRewardBlock;
+  (*If reward is lesser than currentBlk or equal it should give the reward*)
+  isReached = blk_leq rewardBlk currentBlk;
+  match isReached with
+    | True =>
+      weekCount <- howManyWeeklyRewards;
+      isZero = builtin eq weekCount zeroUint;
+      match isZero with
+        | False =>
+          (*Give reward then subtract 1 from weekly*)
+          newWeeklyCount = builtin sub weekCount oneUint;
+          howManyWeeklyRewards := newWeeklyCount
+        | True =>
+          (*Check contract amount the give last week rewards*) 
+      end
+    | False=>
+      err = CodeBlocksNotMet;
+      throwError err
+  end
+end
+
+
+transition RecipientAcceptTransfer(
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+  funded <- fundedContract;
+  match funded with
+    | True =>
+      err = CodeContractFunded;
+      throwError err
+    | False =>
+      weeklyBlk <- weeklyBlocks;
+      contract_balance = builtin add initial reward;
+      contract_amount := contract_balance;
+      
+      onePercent = builtin div contract_balance hundredUint;
+      perWeekReward = builtin mul onePercent rate;
+      rewardPerWeek := perWeekReward;
+      
+      finalWeekRate = builtin rem hundredUint rate;
+      lastWeekReward = builtin mul finalWeekRate onePercent;
+      rewardForLastWeek := lastWeekReward;
+      
+      weekCount = builtin div hundredUint rate;
+      howManyWeeklyRewards := weekCount;
+      
+      current_blk <- & BLOCKNUMBER;
+      firstRewardBlk = builtin badd current_blk weeklyBlk;
+      nextRewardBlock := firstRewardBlk
+  end
+end
+
+transition TransferSuccessCallBack(
+  sender : ByStr20,
+  recipient : ByStr20,
+  amount : Uint128
+)
+end
+
+
+
+
+
+
+
+
+
+
+
+
