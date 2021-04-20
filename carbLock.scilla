@@ -72,6 +72,7 @@ contract CarbLock
 
 (*********    Contract Details       *********)
 field contract_payee : ByStr20 =  initial_owner
+field pending_owner : Option ByStr20 = None {ByStr20}
 field carbonContractAddr : ByStr20 = carbon_contract_addr
 
 field contract_amount: Uint128 = Uint128 0
@@ -85,7 +86,7 @@ field howManyWeeklyRewards: Uint128 = Uint128 0
 
 field nextRewardBlock : BNum = BNum 0
 field weeklyBlocks : Uint128 = Uint128 11900
-
+field rewardIntBlocks : Int256 = Int256 11900
 procedure throwError(err : Error)
   e = make_error err;
   throw e
@@ -123,30 +124,41 @@ transition receiveRewards()
           carbonAddr <- carbonContractAddr;
           
           blockDifference = builtin bsub currentBlk rewardBlk;
-          rewardInt = builtin bsub rewardBlk zeroBlock;
+          rewardInt <- rewardIntBlocks;
           rewardsDued = builtin div blockDifference rewardInt;
           uintRewardsDued = builtin to_uint128 rewardsDued;
           match uintRewardsDued with
             | None =>
             | Some num_rewards_due =>
-              paymentDued = builtin mul num_rewards_due rewardAmount;
-          
-              msg = {_tag: "Transfer"; _recipient : carbonAddr; _amount: Uint128 0; to: _sender; amount: paymentDued};
-              msgs = one_msg msg;
-              send msgs;
               contract_bal <- contract_amount;
-              
-              newBalance = builtin sub contract_bal rewardAmount;
-              contract_amount := newBalance;
-              
-              newWeekly = builtin mul num_rewards_due weeklyBlk;
-              
-              countToMinus = builtin mul num_rewards_due oneUint;
-              newWeeklyCount = builtin sub weekCount countToMinus;
-              howManyWeeklyRewards := newWeeklyCount;
-              
-              nxtRewardBlk = builtin badd currentBlk newWeekly;
-              nextRewardBlock := nxtRewardBlk
+              paymentDued = builtin mul num_rewards_due rewardAmount;
+              isLesserThanAvailable = builtin lt paymentDued contract_bal;
+              match isLesserThanAvailable with
+                | True => 
+                  msg = {_tag: "Transfer"; _recipient : carbonAddr; _amount: Uint128 0; to: _sender; amount: paymentDued};
+                  msgs = one_msg msg;
+                  send msgs;
+                  
+                  
+                  newBalance = builtin sub contract_bal paymentDued;
+                  contract_amount := newBalance;
+                  
+                  newWeekly = builtin mul num_rewards_due weeklyBlk;
+                  
+                  countToMinus = builtin mul num_rewards_due oneUint;
+                  newWeeklyCount = builtin sub weekCount countToMinus;
+                  howManyWeeklyRewards := newWeeklyCount;
+                  
+                  nxtRewardBlk = builtin badd currentBlk newWeekly;
+                  nextRewardBlock := nxtRewardBlk
+                | False =>
+                  howManyWeeklyRewards := zeroUint;
+                  amount_to_send <- contract_amount;
+                  msg = {_tag: "Transfer"; _recipient : carbonAddr; _amount: Uint128 0; to: _sender; amount: amount_to_send};
+                  msgs = one_msg msg;
+                  send msgs;
+                  contract_amount := zeroUint
+              end
           end
         | True =>
           (*Check contract amount the give last week rewards*)
@@ -162,6 +174,46 @@ transition receiveRewards()
       throwError err
   end
 end
+
+
+
+
+
+(*Change Owner of Contract*)
+transition RequestOwnershipTransfer(new_owner : ByStr20)
+  owner <- contract_payee;
+  isOwner = builtin eq _sender owner;
+  match isOwner with
+    | True =>
+      po = Some {ByStr20} new_owner;
+      pending_owner := po
+    | False =>
+      err = CodeNotContractOwner;
+      throwError err
+  end
+end
+
+transition ConfirmOwnershipTransfer()
+  optional_po <- pending_owner;
+  match optional_po with
+  | Some optional_po =>
+      caller_is_new_owner = builtin eq _sender optional_po;
+      match caller_is_new_owner with
+      | True =>
+          (* transfer ownership *)
+          contract_payee := optional_po;
+          none = None {ByStr20};
+          pending_owner := none
+      | False => (* the caller is not the new owner, do nothing*)
+        err = CodeNotContractOwner;
+        throwError err
+      end
+  | None => (* ownership transfer is not in-progress, do nothing *)
+  end
+end
+
+
+
 
 
 transition RecipientAcceptTransfer(
@@ -210,15 +262,3 @@ transition TransferSuccessCallBack(
   amount : Uint128
 )
 end
-
-
-
-
-
-
-
-
-
-
-
-
