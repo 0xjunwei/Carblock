@@ -31,6 +31,7 @@ let blk_leq =
 let true = True
 let false = False
 
+let zeroBlock = BNum 0
 let hundredUint = Uint128 100
 let oneUint = Uint128 1
 let zeroUint = Uint128 0
@@ -115,36 +116,46 @@ transition receiveRewards()
       isZero = builtin eq weekCount zeroUint;
       match isZero with
         | False =>
-          (*Give reward then subtract 1 from weekly*)
+          (*Give reward then subtract from weekly*)
           weeklyBlk <- weeklyBlocks;
-          newWeeklyCount = builtin sub weekCount oneUint;
-          howManyWeeklyRewards := newWeeklyCount;
+          
           rewardAmount <- rewardPerWeek;
           carbonAddr <- carbonContractAddr;
           
-          blockDifference = bsub currentBlk rewardBlk;
-          rewardsDued = builtin div blockDifference rewardBlk;
+          blockDifference = builtin bsub currentBlk rewardBlk;
+          rewardInt = builtin bsub rewardBlk zeroBlock;
+          rewardsDued = builtin div blockDifference rewardInt;
+          uintRewardsDued = builtin to_uint128 rewardsDued;
+          match uintRewardsDued with
+            | None =>
+            | Some num_rewards_due =>
+              paymentDued = builtin mul num_rewards_due rewardAmount;
           
-          paymentDued = builtin mul rewardsDued rewardAmount;
-          
-          msg = {_tag: "Transfer"; _recipient : carbonAddr; _amount: Uint128 0; to: _sender; amount: paymentDued};
-          msgs = one_msg msg;
-          send msgs;
-          contract_bal <- contract_amount;
-          newBalance = builtin sub contract_bal rewardAmount;
-          contract_amount := newBalance;
-          
-          
-          
-          nxtRewardBlk = builtin badd currentBlk weeklyBlk;
-          nextRewardBlock := nxtRewardBlk
+              msg = {_tag: "Transfer"; _recipient : carbonAddr; _amount: Uint128 0; to: _sender; amount: paymentDued};
+              msgs = one_msg msg;
+              send msgs;
+              contract_bal <- contract_amount;
+              
+              newBalance = builtin sub contract_bal rewardAmount;
+              contract_amount := newBalance;
+              
+              newWeekly = builtin mul num_rewards_due weeklyBlk;
+              
+              countToMinus = builtin mul num_rewards_due oneUint;
+              newWeeklyCount = builtin sub weekCount countToMinus;
+              howManyWeeklyRewards := newWeeklyCount;
+              
+              nxtRewardBlk = builtin badd currentBlk newWeekly;
+              nextRewardBlock := nxtRewardBlk
+          end
         | True =>
           (*Check contract amount the give last week rewards*)
-          
-          
-          msg = {_tag: "Transfer"; _recipient : carbonAddr; _amount: Uint128 0; to: _sender; amount: rewardAmount};
+          carbonAddr <- carbonContractAddr;
+          amount_to_send <- contract_amount;
+          msg = {_tag: "Transfer"; _recipient : carbonAddr; _amount: Uint128 0; to: _sender; amount: amount_to_send};
           msgs = one_msg msg;
-          send msgs
+          send msgs;
+          contract_amount := zeroUint
       end
     | False=>
       err = CodeBlocksNotMet;
